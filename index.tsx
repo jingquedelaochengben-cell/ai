@@ -21,6 +21,280 @@ import Sortable, {SortableEvent} from 'sortablejs';
 
 /**
  * -----------------------------------------------------------------------
+ * DOM Element References
+ * -----------------------------------------------------------------------
+ */
+const DOM = {
+  notebookTitle: document.getElementById('notebook-title'),
+  notebook: document.getElementById('notebook') as HTMLDivElement,
+  chat: {
+    toggleBtn: document.getElementById('chat-toggle-btn') as HTMLButtonElement,
+    window: document.getElementById('chat-window') as HTMLDivElement,
+    closeBtn: document.getElementById('chat-close-btn') as HTMLButtonElement,
+    clearBtn: document.getElementById('chat-clear-btn') as HTMLButtonElement,
+    messages: document.getElementById('chat-messages') as HTMLDivElement,
+    input: document.getElementById('chat-input') as HTMLInputElement,
+    sendBtn: document.getElementById('chat-send-btn') as HTMLButtonElement,
+  },
+  settings: {
+    toggleBtn: document.getElementById(
+      'settings-toggle-btn',
+    ) as HTMLButtonElement,
+    panel: document.getElementById('settings-panel') as HTMLDivElement,
+    closeBtn: document.getElementById(
+      'settings-close-btn',
+    ) as HTMLButtonElement,
+    randomColorBtn: document.getElementById(
+      'settings-random-color-btn',
+    ) as HTMLButtonElement,
+    colorPicker: document.getElementById(
+      'settings-color-picker',
+    ) as HTMLInputElement,
+    bgUrlInput: document.getElementById(
+      'settings-bg-url-input',
+    ) as HTMLInputElement,
+    applyBgUrlBtn: document.getElementById(
+      'settings-apply-bg-url-btn',
+    ) as HTMLButtonElement,
+    resetBgBtn: document.getElementById(
+      'settings-reset-btn',
+    ) as HTMLButtonElement,
+    audio: {
+      enable: document.getElementById(
+        'settings-audio-enable',
+      ) as HTMLInputElement,
+      voiceFemale: document.getElementById(
+        'settings-voice-female',
+      ) as HTMLInputElement,
+      voiceMale: document.getElementById(
+        'settings-voice-male',
+      ) as HTMLInputElement,
+      volume: document.getElementById(
+        'settings-audio-volume',
+      ) as HTMLInputElement,
+    },
+  },
+  contact: {
+    toggleBtn: document.getElementById(
+      'contact-toggle-btn',
+    ) as HTMLButtonElement,
+    panel: document.getElementById('contact-panel') as HTMLDivElement,
+    closeBtn: document.getElementById(
+      'contact-close-btn',
+    ) as HTMLButtonElement,
+  },
+};
+
+/**
+ * -----------------------------------------------------------------------
+ * Settings Management
+ * -----------------------------------------------------------------------
+ */
+interface AppSettings {
+  background: {
+    type: 'color' | 'image';
+    value: string;
+  };
+  audio: {
+    enabled: boolean;
+    voice: 'female' | 'male';
+    volume: number; // 0 to 1
+  };
+}
+
+const SETTINGS_KEY = 'gemini-notebook-settings';
+const DEFAULT_SETTINGS: AppSettings = {
+  background: {
+    type: 'color',
+    value: '#121212',
+  },
+  audio: {
+    enabled: false,
+    voice: 'female',
+    volume: 1,
+  },
+};
+
+// Start with a deep copy of default settings
+let settings: AppSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+
+/**
+ * Saves the current settings object to localStorage.
+ */
+function saveSettings() {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch (error) {
+    console.error('Failed to save settings:', error);
+  }
+}
+
+/**
+ * Applies a background color to the body.
+ * @param color The CSS color string.
+ */
+function applyBackgroundColor(color: string) {
+  document.body.style.backgroundColor = color;
+  document.body.style.backgroundImage = 'none';
+}
+
+/**
+ * Applies a background image to the body.
+ * @param url The URL of the image.
+ */
+function applyBackgroundImage(url: string) {
+  document.body.style.backgroundImage = `url('${url}')`;
+  document.body.style.backgroundColor = DEFAULT_SETTINGS.background.value; // Fallback
+}
+
+/**
+ * Updates the UI to reflect the given settings.
+ * @param s The settings object to apply.
+ */
+function applySettings(s: AppSettings) {
+  // Apply background
+  if (s.background.type === 'color') {
+    applyBackgroundColor(s.background.value);
+    DOM.settings.colorPicker.value = s.background.value;
+  } else {
+    applyBackgroundImage(s.background.value);
+    DOM.settings.bgUrlInput.value = s.background.value;
+  }
+
+  // Apply audio settings to UI controls
+  DOM.settings.audio.enable.checked = s.audio.enabled;
+  if (s.audio.voice === 'female') {
+    DOM.settings.audio.voiceFemale.checked = true;
+  } else {
+    DOM.settings.audio.voiceMale.checked = true;
+  }
+  DOM.settings.audio.volume.value = String(s.audio.volume);
+}
+
+/**
+ * Loads settings from localStorage and applies them.
+ * @returns True if settings were loaded, false otherwise.
+ */
+function loadSettings(): boolean {
+  const savedSettings = localStorage.getItem(SETTINGS_KEY);
+  if (savedSettings) {
+    try {
+      const parsedSettings = JSON.parse(savedSettings);
+      // Merge with defaults to handle cases where new settings are added later
+      settings = {
+        ...DEFAULT_SETTINGS,
+        ...parsedSettings,
+        background: {
+          ...DEFAULT_SETTINGS.background,
+          ...parsedSettings.background,
+        },
+        audio: {...DEFAULT_SETTINGS.audio, ...parsedSettings.audio},
+      };
+      applySettings(settings);
+      return true;
+    } catch (e) {
+      console.error('Failed to load settings', e);
+      localStorage.removeItem(SETTINGS_KEY); // Clear corrupted settings
+      return false;
+    }
+  }
+  return false; // No settings found
+}
+
+/**
+ * Sets a random dark color as the background and saves the setting.
+ */
+function setRandomDarkBackgroundColor() {
+  const r = Math.floor(Math.random() * 50); // Keep it dark (0-49)
+  const g = Math.floor(Math.random() * 50);
+  const b = Math.floor(Math.random() * 50);
+
+  const toHex = (c: number) => c.toString(16).padStart(2, '0');
+  const darkColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+
+  applyBackgroundColor(darkColor);
+  DOM.settings.colorPicker.value = darkColor;
+  settings.background = {type: 'color', value: darkColor};
+  saveSettings();
+}
+
+/**
+ * -----------------------------------------------------------------------
+ * Audio Synthesis (TTS)
+ * -----------------------------------------------------------------------
+ */
+let maleVoice: SpeechSynthesisVoice | undefined;
+let femaleVoice: SpeechSynthesisVoice | undefined;
+
+/**
+ * Fetches and stores available system voices for TTS.
+ */
+function populateVoices() {
+  const allVoices = speechSynthesis.getVoices();
+  if (allVoices.length === 0) {
+    // Some browsers (like Chrome) load voices asynchronously.
+    speechSynthesis.onvoiceschanged = populateVoices;
+    return;
+  }
+
+  // Use a simple heuristic to find English male/female voices.
+  femaleVoice =
+    allVoices.find((v) => v.lang.startsWith('en') && v.name.includes('Female')) ||
+    allVoices.find(
+      (v) =>
+        v.lang.startsWith('en') &&
+        (v.name.includes('Zira') ||
+          v.name.includes('Samantha') ||
+          v.name.includes('Google US English')),
+    );
+  maleVoice =
+    allVoices.find((v) => v.lang.startsWith('en') && v.name.includes('Male')) ||
+    allVoices.find(
+      (v) =>
+        v.lang.startsWith('en') &&
+        (v.name.includes('David') ||
+          v.name.includes('Alex') ||
+          v.name.includes('Google UK English Male')),
+    );
+
+  // Fallback to any available English voice if specific ones aren't found
+  if (!femaleVoice) femaleVoice = allVoices.find((v) => v.lang.startsWith('en'));
+  if (!maleVoice) maleVoice = allVoices.find((v) => v.lang.startsWith('en')) || femaleVoice;
+}
+
+/**
+ * Speaks the given text using the selected voice and volume.
+ * @param text The text to speak.
+ */
+function speak(text: string) {
+  if (!settings.audio.enabled || !text) {
+    return;
+  }
+
+  // Stop any currently playing speech to prevent overlap
+  if (speechSynthesis.speaking) {
+    speechSynthesis.cancel();
+  }
+
+  // Clean up text for more natural-sounding speech
+  const cleanText = text
+    .replace(/```[\s\S]*?```/g, 'Code block') // Replace code blocks
+    .replace(/`[^`]+`/g, 'code') // Replace inline code
+    .replace(/(\*\*|__|\*|_)/g, ''); // Remove bold/italic markers
+
+  const utterance = new SpeechSynthesisUtterance(cleanText);
+  const selectedVoice =
+    settings.audio.voice === 'male' ? maleVoice : femaleVoice;
+
+  if (selectedVoice) {
+    utterance.voice = selectedVoice;
+  }
+  utterance.volume = settings.audio.volume;
+  speechSynthesis.speak(utterance);
+}
+
+/**
+ * -----------------------------------------------------------------------
  * Gemini AI Model Initialization
  * -----------------------------------------------------------------------
  */
@@ -197,10 +471,9 @@ function blobToRaw(blobUrl: string) {
 
 const rawLink = blobToRaw(cookbookMetadata.notebookCode);
 
-const notebookTitleElement = document.getElementById('notebook-title');
-if (notebookTitleElement) {
+if (DOM.notebookTitle) {
   // Sanitize metadata.name before setting as textContent to prevent any potential HTML content
-  notebookTitleElement.textContent = String(appMetadata.name || '').replace(
+  DOM.notebookTitle.textContent = String(appMetadata.name || '').replace(
     /<[^>]*>/g,
     '',
   );
@@ -248,7 +521,6 @@ interface Cell {
   lastExecutedContent?: string;
 }
 
-const notebook = document.getElementById('notebook') as HTMLDivElement;
 let cellCounter = 0;
 const cells: Cell[] = [];
 // AI的学习笔记，用来记录用户的好恶
@@ -281,7 +553,7 @@ async function loadNotebookFromMemory() {
     try {
       const notebookState = JSON.parse(savedState);
       if (notebookState.cells && Array.isArray(notebookState.cells)) {
-        notebook.innerHTML = '';
+        DOM.notebook.innerHTML = '';
         cells.length = 0;
         Object.keys(monacoInstances).forEach((id) =>
           monacoInstances[id].dispose(),
@@ -330,7 +602,7 @@ async function addCell(
   cellElement.className = 'cell';
   // A more complex implementation would create the full cell UI with buttons and an editor area.
   cellElement.innerHTML = `<div>[Cell ${cellId} (${type}) placeholder]</div>`;
-  notebook.appendChild(cellElement);
+  DOM.notebook.appendChild(cellElement);
 
   if (type === 'js') {
     if (!monaco) {
@@ -404,32 +676,68 @@ function renderOutputs(outputDiv: HTMLElement, outputs: Output[]) {
   setElementInnerHtml(outputDiv, sanitizeHtml(outputHtml));
 }
 
-// --- Chat Widget Logic ---
-const chatToggleBtn = document.getElementById(
-  'chat-toggle-btn',
-) as HTMLButtonElement;
-const chatWindow = document.getElementById('chat-window') as HTMLDivElement;
-const chatCloseBtn = document.getElementById(
-  'chat-close-btn',
-) as HTMLButtonElement;
-const chatClearBtn = document.getElementById(
-  'chat-clear-btn',
-) as HTMLButtonElement;
-const chatMessages = document.getElementById('chat-messages') as HTMLDivElement;
-const chatInput = document.getElementById('chat-input') as HTMLInputElement;
-const chatSendBtn = document.getElementById('chat-send-btn') as HTMLButtonElement;
+// --- Panel Management Logic ---
+type PanelName = 'chat' | 'settings' | 'contact';
+let activePanel: PanelName | null = null;
 
-let chatHistory: {sender: 'user' | 'ai'; message: string}[] = [];
+const panelMap: Record<
+  PanelName,
+  {panel: HTMLElement; toggleBtn: HTMLElement; focusEl?: HTMLElement}
+> = {
+  chat: {
+    panel: DOM.chat.window,
+    toggleBtn: DOM.chat.toggleBtn,
+    focusEl: DOM.chat.input,
+  },
+  settings: {panel: DOM.settings.panel, toggleBtn: DOM.settings.toggleBtn},
+  contact: {panel: DOM.contact.panel, toggleBtn: DOM.contact.toggleBtn},
+};
 
-function toggleChat(visible?: boolean) {
-  const isHidden = chatWindow.classList.contains('hidden');
-  const show = visible === undefined ? isHidden : visible;
-  chatWindow.classList.toggle('hidden', !show);
-  chatToggleBtn.setAttribute('aria-expanded', String(show));
+function togglePanel(panelName: PanelName, force?: boolean) {
+  const isAlreadyOpen = activePanel === panelName;
+  const show = force === undefined ? !isAlreadyOpen : force;
+
+  // Close any currently active panel
+  if (activePanel && activePanel !== panelName) {
+    const current = panelMap[activePanel];
+    current.panel.classList.add('hidden');
+    current.toggleBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  const target = panelMap[panelName];
   if (show) {
-    chatInput.focus();
+    target.panel.classList.remove('hidden');
+    target.toggleBtn.setAttribute('aria-expanded', 'true');
+    activePanel = panelName;
+    target.focusEl?.focus();
+  } else {
+    target.panel.classList.add('hidden');
+    target.toggleBtn.setAttribute('aria-expanded', 'false');
+    if (isAlreadyOpen) {
+      activePanel = null;
+      target.toggleBtn.focus(); // Return focus on close
+    }
   }
 }
+
+// Global listeners for closing panels
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && activePanel) {
+    togglePanel(activePanel, false);
+  }
+});
+
+document.addEventListener('click', (e) => {
+  if (!activePanel) return;
+  const {panel, toggleBtn} = panelMap[activePanel];
+  const target = e.target as HTMLElement;
+  if (!panel.contains(target) && !toggleBtn.contains(target)) {
+    togglePanel(activePanel, false);
+  }
+});
+
+// --- Chat Widget Logic ---
+let chatHistory: {sender: 'user' | 'ai'; message: string}[] = [];
 
 function addMessageToChatUI(
   sender: 'user' | 'ai',
@@ -438,60 +746,132 @@ function addMessageToChatUI(
 ) {
   const messageElement = document.createElement('div');
   messageElement.classList.add('message', `${sender}-message`);
+
   if (thinking) {
     messageElement.classList.add('thinking');
     messageElement.innerHTML = `<span>.</span><span>.</span><span>.</span>`;
   } else {
+    messageElement.classList.add('new-message-animation');
     if (sender === 'ai') {
-      // Fix: Sanitize the HTML output from markdown-it before setting it as inner HTML.
       setElementInnerHtml(messageElement, sanitizeHtml(md.render(message)));
     } else {
       messageElement.textContent = message;
     }
+    messageElement.addEventListener('animationend', () => {
+      messageElement.classList.remove('new-message-animation');
+    });
   }
-  chatMessages.appendChild(messageElement);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
+
+  DOM.chat.messages.appendChild(messageElement);
+  DOM.chat.messages.scrollTop = DOM.chat.messages.scrollHeight;
   return messageElement;
 }
 
 async function handleSendMessage() {
-  const message = chatInput.value.trim();
+  const message = DOM.chat.input.value.trim();
   if (!message) return;
 
   addMessageToChatUI('user', message);
   chatHistory.push({sender: 'user', message});
-  chatInput.value = '';
-  chatInput.disabled = true;
-  chatSendBtn.disabled = true;
+  DOM.chat.input.value = '';
+  DOM.chat.input.disabled = true;
+  DOM.chat.sendBtn.disabled = true;
 
   const thinkingIndicator = addMessageToChatUI('ai', '', true);
 
   const aiResponse = await processChatMessage(message);
 
-  chatMessages.removeChild(thinkingIndicator);
+  DOM.chat.messages.removeChild(thinkingIndicator);
   addMessageToChatUI('ai', aiResponse);
   chatHistory.push({sender: 'ai', message: aiResponse});
+  speak(aiResponse); // Speak the AI's response
 
-  chatInput.disabled = false;
-  chatSendBtn.disabled = false;
-  chatInput.focus();
+  DOM.chat.input.disabled = false;
+  DOM.chat.sendBtn.disabled = false;
+  DOM.chat.input.focus();
 }
 
 function clearChat() {
-  chatMessages.innerHTML = '';
+  DOM.chat.messages.innerHTML = '';
   chatHistory = [];
 }
 
-chatToggleBtn.addEventListener('click', () => toggleChat());
-chatCloseBtn.addEventListener('click', () => toggleChat(false));
-chatSendBtn.addEventListener('click', handleSendMessage);
-chatInput.addEventListener('keydown', (e) => {
+DOM.chat.toggleBtn.addEventListener('click', () => togglePanel('chat'));
+DOM.chat.closeBtn.addEventListener('click', () => togglePanel('chat', false));
+DOM.chat.sendBtn.addEventListener('click', handleSendMessage);
+DOM.chat.input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     handleSendMessage();
   }
 });
-chatClearBtn.addEventListener('click', clearChat);
+DOM.chat.clearBtn.addEventListener('click', clearChat);
+
+// --- Settings Widget Logic ---
+DOM.settings.toggleBtn.addEventListener('click', () => togglePanel('settings'));
+DOM.settings.closeBtn.addEventListener('click', () =>
+  togglePanel('settings', false),
+);
+
+// Background Settings
+DOM.settings.randomColorBtn.addEventListener(
+  'click',
+  setRandomDarkBackgroundColor,
+);
+
+DOM.settings.colorPicker.addEventListener('input', (e) => {
+  const color = (e.target as HTMLInputElement).value;
+  applyBackgroundColor(color);
+  settings.background = {type: 'color', value: color};
+  saveSettings();
+});
+
+DOM.settings.applyBgUrlBtn.addEventListener('click', () => {
+  const url = DOM.settings.bgUrlInput.value.trim();
+  if (url) {
+    applyBackgroundImage(url);
+    settings.background = {type: 'image', value: url};
+    saveSettings();
+  }
+});
+
+DOM.settings.resetBgBtn.addEventListener('click', () => {
+  const defaultColor = DEFAULT_SETTINGS.background.value;
+  applyBackgroundColor(defaultColor);
+  DOM.settings.colorPicker.value = defaultColor;
+  settings.background = {type: 'color', value: defaultColor};
+  saveSettings();
+});
+
+// Audio Settings
+DOM.settings.audio.enable.addEventListener('change', (e) => {
+  settings.audio.enabled = (e.target as HTMLInputElement).checked;
+  if (!settings.audio.enabled) {
+    speechSynthesis.cancel(); // Stop speech if disabled
+  }
+  saveSettings();
+});
+
+DOM.settings.audio.voiceFemale.addEventListener('change', () => {
+  settings.audio.voice = 'female';
+  saveSettings();
+});
+
+DOM.settings.audio.voiceMale.addEventListener('change', () => {
+  settings.audio.voice = 'male';
+  saveSettings();
+});
+
+DOM.settings.audio.volume.addEventListener('input', (e) => {
+  settings.audio.volume = parseFloat((e.target as HTMLInputElement).value);
+  saveSettings();
+});
+
+// --- Contact Widget Logic ---
+DOM.contact.toggleBtn.addEventListener('click', () => togglePanel('contact'));
+DOM.contact.closeBtn.addEventListener('click', () =>
+  togglePanel('contact', false),
+);
 
 // --- Application Initialization ---
 
@@ -542,10 +922,18 @@ function initializeAppWithChatState() {
     chatHistory.push(msg);
   });
 
-  toggleChat(true); // Open chat to show the demo
+  togglePanel('chat', true); // Open chat to show the demo
 }
 
 async function main() {
+  populateVoices(); // Initialize TTS voices
+  const loadedSettings = loadSettings();
+
+  if (!loadedSettings) {
+    // No saved settings, set a random background for the first time.
+    setRandomDarkBackgroundColor();
+  }
+
   const loadedFromMemory = await loadNotebookFromMemory();
   if (!loadedFromMemory) {
     // If nothing in memory, load default demo notebook and chat

@@ -72,6 +72,79 @@
     </header>
     <div id="notebook"></div>
 
+    <div id="contact-widget">
+        <button id="contact-toggle-btn" title="Contact Us" aria-label="Toggle Contact Panel" aria-expanded="false">
+            <i class="fa-solid fa-envelope" aria-hidden="true"></i>
+        </button>
+        <div id="contact-panel" class="hidden" role="dialog" aria-labelledby="contact-header-title">
+            <div id="contact-header">
+                <span id="contact-header-title">Contact Us</span>
+                <button id="contact-close-btn" title="Close contact" aria-label="Close Contact">&times;</button>
+            </div>
+            <div id="contact-content">
+                <div class="contact-item">
+                    <i class="fa-solid fa-envelope"></i>
+                    <a href="mailto:qiheisj3131@163.com">qiheisj3131@163.com</a>
+                </div>
+                <div class="contact-item">
+                    <i class="fa-brands fa-youtube"></i>
+                    <a href="https://www.youtube.com/@zhaozexizhao-u1p" target="_blank" rel="noopener">@zhaozexizhao-u1p</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="settings-widget">
+      <button id="settings-toggle-btn" title="Settings" aria-label="Toggle Settings Panel" aria-expanded="false">
+        <i class="fa-solid fa-gear" aria-hidden="true"></i>
+      </button>
+      <div id="settings-panel" class="hidden" role="dialog" aria-labelledby="settings-header-title">
+        <div id="settings-header">
+          <span id="settings-header-title">Settings</span>
+          <button id="settings-close-btn" title="Close settings" aria-label="Close Settings">&times;</button>
+        </div>
+        <div id="settings-content">
+           <div style="font-weight: bold; color: #ccc;">Background</div>
+           <button id="settings-random-color-btn" class="settings-btn">Random Color</button>
+           <div class="settings-control">
+             <label for="settings-color-picker">Pick Color</label>
+             <input type="color" id="settings-color-picker" />
+           </div>
+           <div class="settings-control">
+              <label for="settings-bg-url-input">Image URL</label>
+              <div class="input-group">
+                <input type="text" id="settings-bg-url-input" placeholder="Paste image URL..." />
+                <button id="settings-apply-bg-url-btn">Apply</button>
+              </div>
+           </div>
+           <button id="settings-reset-btn" class="settings-btn reset-btn">Reset to Default</button>
+           <hr />
+           <div style="font-weight: bold; color: #ccc;">Audio Settings</div>
+           <div class="settings-control">
+              <label for="settings-audio-enable">Enable Speech</label>
+              <label class="switch">
+                <input type="checkbox" id="settings-audio-enable">
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <div class="settings-control">
+              <label>Voice</label>
+              <div class="segmented-control">
+                <input type="radio" id="settings-voice-female" name="settings-voice" value="female" checked>
+                <label for="settings-voice-female">Female</label>
+                <input type="radio" id="settings-voice-male" name="settings-voice" value="male">
+                <label for="settings-voice-male">Male</label>
+              </div>
+            </div>
+            <div class="settings-control">
+              <label for="settings-audio-volume">Volume</label>
+              <input type="range" id="settings-audio-volume" min="0" max="1" step="0.1" value="1">
+            </div>
+        </div>
+      </div>
+    </div>
+
+
     <div id="chat-widget">
       <button id="chat-toggle-btn" title="AI Assistant" aria-label="Toggle AI Assistant Chat" aria-expanded="false">
         <i class="fa-solid fa-comment-dots" aria-hidden="true"></i>
