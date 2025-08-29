@@ -1,0 +1,6 @@
+{
+  "name": "Get Started with Gemini 2.5 Flash Image",
+  "description": "Discover how to use the Gemini 2.5 image model (aka nano banana) using the Gemini JS SDK in an interactive way. No need to create an API key or set up your environment.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
