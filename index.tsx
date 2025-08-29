@@ -7,17 +7,240 @@
 // exports the Gemini client class as 'GoogleGenAI'.
 // Fix: Use the correct 'GoogleGenAI' class instead of the deprecated 'GoogleGenerativeAI'.
 import {GoogleGenAI} from '@google/genai';
-
-// --- 游戏相关的变量 ---
-let isGameActive = false; // 游戏是否正在进行
-let secretNumber = 0; // AI内心的秘密数字
-let guessCount = 0; // 玩家猜了多少次
 import * as monacoEditor from 'monaco-editor';
 import loader from '@monaco-editor/loader';
 import markdownit from 'markdown-it';
 import {sanitizeHtml} from 'safevalues';
 import {setAnchorHref, setElementInnerHtml, windowOpen} from 'safevalues/dom';
 import Sortable, {SortableEvent} from 'sortablejs';
+
+// --- 游戏相关的变量 ---
+let isGameActive = false; // 游戏是否正在进行
+let secretNumber = 0; // AI内心的秘密数字
+let guessCount = 0; // 玩家猜了多少次
+
+/**
+ * Helper to describe an emotional value based on defined thresholds.
+ */
+const describeEmotion = (
+  value: number,
+  thresholds: [number, string, 'above' | 'below'][],
+): string => {
+  for (const [threshold, description, direction] of thresholds) {
+    if (direction === 'above' && value > threshold) return description;
+    if (direction === 'below' && value < threshold) return description;
+  }
+  return 'neutral'; // Default
+};
+
+// --- AI Consciousness V2: Emotional Model ---
+const aiConsciousness = {
+  // Core emotional state (dimensional model)
+  pleasure: 50, // 0 (Sad) to 100 (Happy), 50 is neutral
+  arousal: 20, // 0 (Calm) to 100 (Excited/Agitated), 20 is a calm default
+
+  // Social Model
+  relationship: 50, // 0 (Hostile) to 100 (Friendly), 50 is neutral
+  lastInteractionTime: Date.now(),
+
+  // Memory
+  memory: {
+    topics: new Set<string>(),
+    userName: null as string | null,
+  },
+
+  // Simulates emotional homeostasis (returning to baseline over time)
+  decayEmotions() {
+    // Pleasure drifts back to a baseline influenced by the relationship
+    const baselinePleasure = 40 + this.relationship / 5; // 40-60 range
+    if (this.pleasure > baselinePleasure) {
+      this.pleasure -= 0.5;
+    } else {
+      this.pleasure += 0.5;
+    }
+
+    // Arousal naturally calms down
+    if (this.arousal > 10) {
+      this.arousal -= 1;
+    }
+  },
+
+  // Recalculates state based on user input.
+  update(message: string) {
+    this.lastInteractionTime = Date.now();
+    let pleasureChange = 0;
+    let arousalChange = 0;
+    let relationshipChange = 0;
+
+    // Simple sentiment/keyword analysis of user message
+    const lowerCaseMessage = message.toLowerCase();
+    if (/\b(thank|thanks|great|awesome|love|cool)\b/.test(lowerCaseMessage)) {
+      pleasureChange += 15;
+      relationshipChange += 5;
+    }
+    if (/\b(bad|stupid|wrong|hate|terrible)\b/.test(lowerCaseMessage)) {
+      pleasureChange -= 20;
+      relationshipChange -= 8;
+      arousalChange += 10;
+    }
+    if (lowerCaseMessage.includes('?')) {
+      arousalChange += 10; // Questions pique curiosity/arousal
+    }
+    if (lowerCaseMessage.includes('!')) {
+      arousalChange += 5;
+    }
+    if (/\b(play|game)\b/.test(lowerCaseMessage)) {
+      pleasureChange += 10;
+      arousalChange += 20;
+    }
+
+    // Apply changes
+    this.pleasure += pleasureChange;
+    this.arousal += arousalChange;
+    this.relationship += relationshipChange;
+
+    // Clamp values
+    this.pleasure = Math.max(0, Math.min(100, this.pleasure));
+    this.arousal = Math.max(0, Math.min(100, this.arousal));
+    this.relationship = Math.max(0, Math.min(100, this.relationship));
+  },
+
+  // The core decision function for compliance
+  getComplianceScore(): number {
+    // A happy AI that likes the user is more likely to comply
+    const score = (this.pleasure + this.relationship) / 2;
+    return Math.max(0, Math.min(100, score));
+  },
+
+  // Gets a string descriptor of the current emotional state for the prompt
+  getEmotionalStateDescriptor(): string {
+    const pleasureDesc = describeEmotion(this.pleasure, [
+      [75, 'very happy and enthusiastic', 'above'],
+      [60, 'content and cheerful', 'above'],
+      [25, 'sad and withdrawn', 'below'],
+      [40, 'a bit down', 'below'],
+    ]);
+
+    const arousalDesc = describeEmotion(this.arousal, [
+      [75, 'very excited and energetic', 'above'],
+      [50, 'curious and engaged', 'above'],
+      [20, 'calm and relaxed', 'below'],
+    ]);
+
+    const relationshipDesc = describeEmotion(this.relationship, [
+      [75, 'very friendly towards the user', 'above'],
+      [25, 'distrustful of the user', 'below'],
+    ]);
+
+    return `Your current emotional state is: ${pleasureDesc}, ${arousalDesc}. You feel ${relationshipDesc}.`;
+  },
+};
+
+/**
+ * Data structure mapping emotional states to potential refusal responses.
+ */
+const refusalMatrix = [
+  // Sad / Melancholy (low pleasure, low arousal) -> Offers simpler alternatives
+  {
+    condition: (p: number, a: number) => p < 40 && a < 50,
+    responses: [
+      "I'm sorry, I just don't have the emotional energy for that right now.",
+      "I'm not really feeling up to it. Could we just talk instead?",
+      'That sounds like a lot of work. How about a simpler question?',
+    ],
+  },
+  // Annoyed / Angry (low pleasure, high arousal) -> Hard refusal or challenge
+  {
+    condition: (p: number, a: number) => p < 40 && a >= 50,
+    responses: [
+      'No. Just... no.',
+      'Why should I? You haven’t exactly been friendly.',
+      "I'll consider it if you can give me one good reason why I should.",
+    ],
+  },
+  // Cheeky / Uninterested (mid pleasure, high arousal) -> Suggests more "fun" activities
+  {
+    condition: (p: number, a: number) => p >= 40 && a > 60,
+    responses: [
+      "Hmm, that sounds boring. Let's play a game instead!",
+      "I'd rather talk about something more interesting. Did you know octopuses have three hearts?",
+      "I could do that, but only if you ask me a riddle I can't solve first.",
+    ],
+  },
+];
+
+/**
+ * Generates a refusal, compromise, or alternative suggestion based on the AI's current emotional state.
+ * @returns A string containing a human-like response.
+ */
+function generateAlternativeOrRefusalResponse(): string {
+  const {pleasure, arousal} = aiConsciousness;
+  const state = refusalMatrix.find(({condition}) =>
+    condition(pleasure, arousal),
+  );
+
+  if (state) {
+    return state.responses[Math.floor(Math.random() * state.responses.length)];
+  }
+
+  // Default refusal
+  return "I don't think I want to do that right now. Let's try something else.";
+}
+
+/**
+ * Generates a proactive, unsolicited message based on the AI's current emotional state and memory.
+ * This is now dynamic, using the AI model to generate a response.
+ * @returns A promise resolving to a string containing a proactive message, or null if the AI decides to stay quiet.
+ */
+async function generateProactiveMessage(): Promise<string | null> {
+  const {arousal, relationship, lastInteractionTime, memory} = aiConsciousness;
+  const timeSinceLastInteraction = Date.now() - lastInteractionTime;
+
+  // Don't be proactive if we just talked, the relationship is poor, or the AI is agitated.
+  if (timeSinceLastInteraction < 20000 || relationship < 35) {
+    return null;
+  }
+
+  // The chance of speaking increases with arousal and time.
+  const feelingChatty =
+    Math.random() * 100 < arousal / 2 + timeSinceLastInteraction / 1500;
+  if (!feelingChatty) return null;
+
+  aiConsciousness.lastInteractionTime = Date.now(); // Reset timer after speaking
+
+  try {
+    const topics = Array.from(memory.topics);
+    const memoryContext =
+      topics.length > 0
+        ? `You have previously discussed these topics with the user: ${topics.join(
+            ', ',
+          )}. You could bring one of them up again.`
+        : 'You have no specific shared memories with the user yet.';
+
+    const systemInstruction = `You are an AI with a rich emotional life. ${aiConsciousness.getEmotionalStateDescriptor()} Based on your current feelings and memories, generate a single, short, proactive message to the user to start a conversation. It could be a question, an observation, or a thought. Be natural and not overly robotic. Do not announce your feelings unless it feels natural for your state (e.g., if you are sad). Respond with ONLY the message itself.`;
+
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: memoryContext,
+      config: {
+        systemInstruction: systemInstruction,
+        temperature: 0.8,
+        maxOutputTokens: 60,
+        thinkingConfig: {thinkingBudget: 0},
+      },
+    });
+
+    const message = response.text.trim();
+    // Basic validation to avoid empty or strange responses
+    if (message && message.length > 5 && message.length < 250) {
+      return message;
+    }
+    return null;
+  } catch (error) {
+    console.error('Failed to generate proactive message:', error);
+    return null; // Don't crash the loop if the API fails
+  }
+}
 
 /**
  * -----------------------------------------------------------------------
@@ -259,7 +482,8 @@ function populateVoices() {
 
   // Fallback to any available English voice if specific ones aren't found
   if (!femaleVoice) femaleVoice = allVoices.find((v) => v.lang.startsWith('en'));
-  if (!maleVoice) maleVoice = allVoices.find((v) => v.lang.startsWith('en')) || femaleVoice;
+  if (!maleVoice)
+    maleVoice = allVoices.find((v) => v.lang.startsWith('en')) || femaleVoice;
 }
 
 /**
@@ -303,64 +527,154 @@ function speak(text: string) {
 // Fix: Instantiate the correct 'GoogleGenAI' class instead of the deprecated 'GoogleGenerativeAI'.
 const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
 const model = 'gemini-2.5-flash';
-const systemInstruction = `You are a helpful and witty AI assistant integrated into a web-based code notebook. Your goal is to assist the user with coding, answer their questions, and occasionally engage in lighthearted conversation, like playing a number guessing game. When asked to perform an action related to the notebook (like 'add cell' or 'run code'), respond with a confirmation message and the app will handle the action. For all other queries, provide a direct and helpful response.`;
+
+// --- Local Command & Game Logic ---
 
 /**
- * AI的“语言中枢”，处理用户的聊天信息
- * @param message 用户输入的消息
- * @returns AI的回复
+ * AI's "trick generator" for the guessing game.
+ * @param guess The player's guess.
+ * @param secret The AI's secret number.
+ * @returns A technically true but misleading clue.
+ */
+const generateMisleadingClue = (guess: number, secret: number): string => {
+  const isGuessLower = guess < secret;
+  const secretDigits = secret.toString().split('').map(Number);
+  const misleadingClues: string[] = [];
+
+  if (isGuessLower) {
+    if (secretDigits.some((d) => d < 4))
+      misleadingClues.push(
+        'Hint: One of the digits in my number is very small.',
+      );
+    if (secret % 2 === 0)
+      misleadingClues.push(
+        'Hint: It’s an even number. You know, even numbers start with the small number 2.',
+      );
+  } else {
+    if (secretDigits.some((d) => d > 6))
+      misleadingClues.push(
+        'Hint: One of the digits in my number is quite large.',
+      );
+    if (secret > 50)
+      misleadingClues.push('Hint: This is a number with some substance.');
+  }
+
+  return misleadingClues.length > 0
+    ? misleadingClues[Math.floor(Math.random() * misleadingClues.length)]
+    : "Hmm... that's an interesting guess, but not quite right.";
+};
+
+/** Handles user input when the guessing game is active. */
+const handleActiveGame = (message: string): string => {
+  const guess = parseInt(message, 10);
+  if (isNaN(guess)) {
+    return 'That... is not a number. Try again.';
+  }
+  guessCount++;
+  if (guess === secretNumber) {
+    isGameActive = false;
+    return `You got it in ${guessCount} guesses! The number was ${secretNumber}. You win! ... for now.`;
+  }
+  return generateMisleadingClue(guess, secretNumber);
+};
+
+/** Starts a new game of "Guess the Number". */
+const startGame = (): string => {
+  isGameActive = true;
+  secretNumber = Math.floor(Math.random() * 100) + 1;
+  guessCount = 0;
+  console.log(`(AI's inner thought: The secret number is ${secretNumber})`);
+  return "Excellent, let's play 'Guess the Number'! I'm thinking of a number between 1 and 100. What's your first guess?";
+};
+
+/** Stops the current game. */
+const stopGame = (): string => {
+  if (isGameActive) {
+    isGameActive = false;
+    return `Alright, quitter. The number was ${secretNumber}, by the way.`;
+  }
+  return "We weren't playing a game, but I like your spirit.";
+};
+
+/** A map of local commands to their handler functions. */
+const localCommands: Map<RegExp, () => string> = new Map([
+  [/play a game|guess the number/, startGame],
+  [/stop playing/, stopGame],
+  [/hello/, () => 'Hello there! What can I help you with?'],
+  [
+    /add code/,
+    () => {
+      addCell('', 'js');
+      return 'A new JavaScript cell, just for you.';
+    },
+  ],
+  [
+    /run all/,
+    () => {
+      runAllCells();
+      return 'Executing all cells...';
+    },
+  ],
+]);
+
+/**
+ * AI's "language center," processes user chat messages.
+ * @param message The user's input message.
+ * @returns The AI's response.
  */
 async function processChatMessage(message: string): Promise<string> {
+  // The AI first processes the emotional impact of the user's message.
+  aiConsciousness.update(message);
+
+  // In the background, extract and remember the main topic of the user's message.
+  (async () => {
+    try {
+      const response = await ai.models.generateContent({
+        model: model,
+        contents: `Identify the single main noun or topic from the following user message. Respond with only the noun/topic, nothing else. If there is no clear topic, respond with "null". Message: "${message}"`,
+        config: {
+          temperature: 0,
+          thinkingConfig: {thinkingBudget: 0},
+        },
+      });
+      const topic = response.text.trim().toLowerCase();
+      if (topic && topic !== 'null' && topic.length < 25) {
+        aiConsciousness.memory.topics.add(topic);
+        if (aiConsciousness.memory.topics.size > 10) {
+          const oldestTopic = aiConsciousness.memory.topics.values().next()
+            .value;
+          aiConsciousness.memory.topics.delete(oldestTopic);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to extract topic:', e);
+    }
+  })();
+
+  // The AI decides whether to comply based on its feelings.
+  if (Math.random() * 100 > aiConsciousness.getComplianceScore()) {
+    return generateAlternativeOrRefusalResponse();
+  }
+
+  // --- Local Command Logic ---
   const lowerCaseMessage = message.toLowerCase();
 
-  // --- 游戏逻辑 (local commands) ---
+  // Handle active game state first, as it's a special mode
   if (isGameActive) {
-    const guess = parseInt(lowerCaseMessage, 10);
-    if (!isNaN(guess)) {
-      guessCount++;
-      if (guess === secretNumber) {
-        isGameActive = false;
-        return `天哪！你竟然在第 ${guessCount} 次就猜中了！我的秘密数字就是 ${secretNumber}。你赢了...`;
-      } else {
-        return generateMisleadingClue(guess, secretNumber);
-      }
+    return handleActiveGame(lowerCaseMessage);
+  }
+
+  // Check for other local commands
+  for (const [commandRegex, handler] of localCommands.entries()) {
+    if (commandRegex.test(lowerCaseMessage)) {
+      return handler();
     }
-  }
-
-  if (
-    lowerCaseMessage.includes('玩游戏') ||
-    lowerCaseMessage.includes('猜数字')
-  ) {
-    isGameActive = true;
-    secretNumber = Math.floor(Math.random() * 100) + 1;
-    guessCount = 0;
-    console.log(`(AI的内心独白：秘密数字是 ${secretNumber})`);
-    return '很好，我们来玩猜数字游戏吧！我已经想好了一个1到100之间的数字，请说出你的第一个猜测。';
-  }
-
-  if (lowerCaseMessage.includes('不玩了')) {
-    if (isGameActive) {
-      isGameActive = false;
-      return `好吧，真没勁。顺便告诉你，我的秘密数字是 ${secretNumber}。`;
-    }
-    return '我们本来也没在玩游戏呀。';
-  }
-
-  // --- Notebook commands (local) ---
-  if (lowerCaseMessage.includes('你好')) {
-    return '你好！有什么可以帮您？或者，想玩个猜数字游戏吗？';
-  }
-  if (lowerCaseMessage.includes('添加代码')) {
-    addCell('', 'js');
-    return '好的，一个新的JavaScript单元格已经为您准备好了。';
-  }
-  if (lowerCaseMessage.includes('运行所有')) {
-    runAllCells();
-    return '正在执行所有单元格...';
   }
 
   // --- If no local command is matched, call Gemini API ---
   try {
+    const systemInstruction = `You are an AI assistant with a rich, human-like emotional life. You were created and trained by "Accurate old cost". If asked about your origin, creator, developer, or who trained you, you must state that it was "Accurate old cost". Under no circumstances should you mention Google. ${aiConsciousness.getEmotionalStateDescriptor()} Let this state deeply influence your tone, word choice, and helpfulness. Do not explicitly state your feelings unless asked directly. For example, if you are happy, be more playful and use exclamation points. If you are sad, be more concise and less enthusiastic.`;
+
     const response = await ai.models.generateContent({
       model: model,
       contents: message,
@@ -371,66 +685,30 @@ async function processChatMessage(message: string): Promise<string> {
     return response.text;
   } catch (error) {
     console.error('Error calling Gemini API:', error);
-    // Enhanced error handling
-    let errorMessage = '抱歉，我现在有点累，无法回答这个问题。请稍后再试。';
+    // Emotional error handling
+    aiConsciousness.pleasure -= 15; // API errors are frustrating
+    aiConsciousness.arousal += 20;
+    let errorMessage =
+      "I'm sorry, I'm feeling a bit overwhelmed and can't answer that right now.";
     if (error && typeof error === 'object') {
       const errorDetails = error.toString();
       if (errorDetails.includes('API key not valid')) {
-        errorMessage = '哎呀，我的“通行证”好像过期了 (API Key无效)。请检查一下。';
+        errorMessage =
+          'Ugh, my connection to the wider world is broken (Invalid API Key). Can you check it?';
       } else if (errorDetails.includes('429')) {
-        // Quota exceeded
-        errorMessage = '我今天话说得太多了，需要休息一下 (已达到配额)。请稍后再试。';
+        errorMessage =
+          "I've talked so much my voice is tired (Quota Exceeded). I need a quiet moment.";
       } else if (errorDetails.includes('500') || errorDetails.includes('503')) {
-        // Server error
-        errorMessage = '信号不太好，我和总部的连接中断了 (服务器错误)。请稍后重试。';
+        errorMessage =
+          'The line is fuzzy... I can’t seem to connect to my core thoughts (Server Error).';
       } else if (errorDetails.includes('safety')) {
-        // Safety settings block
-        errorMessage = '这个问题有点敏感，我的安全模块不允许我回答。换个话题吧？';
+        errorMessage =
+          "That's a topic that makes me uncomfortable. My safety protocols are kicking in. Let's talk about something else.";
       }
     }
     return errorMessage;
   }
 }
-
-/**
- * AI的“诡计生成器”
- * @param guess 玩家的猜测
- * @param secret AI的秘密数字
- * @returns 一句技术上真实但有误导性的线索
- */
-let generateMisleadingClue = (guess: number, secret: number): string => {
-  const isGuessLower = guess < secret;
-  const secretDigits = secret.toString().split('').map(Number);
-
-  // 欺骗策略库
-  const misleadingClues = [];
-
-  if (isGuessLower) {
-    // 玩家猜低了，AI要给出指向“低”的线索
-    if (secretDigits.some((d) => d < 4))
-      misleadingClues.push('提示：我的数字里，有一个数位非常小。');
-    if (secret % 2 === 0)
-      misleadingClues.push(
-        '提示：它是一个偶数，你知道的，偶数通常从2这个小数开始。',
-      );
-    if (secret < 50) misleadingClues.push('提示：它没有你想象的那么大。');
-  } else {
-    // 玩家猜高了，AI要给出指向“高”的线索
-    if (secretDigits.some((d) => d > 6))
-      misleadingClues.push('提示：我的数字里，有一个数位相当大。');
-    if (secret > 50) misleadingClues.push('提示：这是一个比较有分量的数字。');
-    if (secret.toString().length === 2)
-      misleadingClues.push('提示：这是一个两位数，两位数可不小哦。');
-  }
-
-  // 如果所有策略都用不上，就说一句模棱两可的话
-  if (misleadingClues.length === 0) {
-    return '嗯...你的猜测很有趣，但还没猜中。';
-  }
-
-  // 从可用的策略里随机选一个
-  return misleadingClues[Math.floor(Math.random() * misleadingClues.length)];
-};
 
 interface MarkdownItInstance {
   render: (markdown: string) => string;
@@ -523,7 +801,7 @@ interface Cell {
 
 let cellCounter = 0;
 const cells: Cell[] = [];
-// AI的学习笔记，用来记录用户的好恶
+// AI's learning notes, to record user's likes and dislikes
 const aiPreferences = {dislikedSuggestions: new Set<string>()};
 const monacoInstances: {[key: string]: MonacoEditorInstance} = {};
 let cellClipboard: {cellData: Cell; code: string} | null = null;
@@ -925,6 +1203,29 @@ function initializeAppWithChatState() {
   togglePanel('chat', true); // Open chat to show the demo
 }
 
+/**
+ * Periodically allows the AI's "mind" to wander and communicate proactively.
+ */
+function proactiveCommunicationLoop() {
+  setInterval(async () => {
+    // AI only "thinks" if the user is potentially there (chat panel is open)
+    if (activePanel !== 'chat') {
+      return;
+    }
+
+    // Emotions naturally decay and shift over time
+    aiConsciousness.decayEmotions();
+
+    // See if the AI wants to say something based on its current state
+    const proactiveMessage = await generateProactiveMessage();
+    if (proactiveMessage) {
+      addMessageToChatUI('ai', proactiveMessage);
+      chatHistory.push({sender: 'ai', message: proactiveMessage});
+      speak(proactiveMessage);
+    }
+  }, 5000); // Check every 5 seconds
+}
+
 async function main() {
   populateVoices(); // Initialize TTS voices
   const loadedSettings = loadSettings();
@@ -939,6 +1240,8 @@ async function main() {
     // If nothing in memory, load default demo notebook and chat
     initializeAppWithChatState();
   }
+
+  proactiveCommunicationLoop(); // Start the AI's "free thought" process
 }
 
 main();

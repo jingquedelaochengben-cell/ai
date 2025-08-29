@@ -99,17 +99,13 @@ body::after {
   color: #fff;
 }
 
-/* --- ADDED FOR CHAT WIDGET --- */
-
-#chat-widget {
+/* --- GENERIC WIDGET STYLES --- */
+.widget {
   position: fixed;
-  bottom: 20px;
-  right: 20px;
   z-index: 1001;
 }
 
-#chat-toggle-btn {
-  background-color: #0e639c;
+.widget-toggle-btn {
   color: white;
   border: none;
   border-radius: 50%;
@@ -124,19 +120,13 @@ body::after {
   transition: transform 0.2s ease, background-color 0.2s ease;
 }
 
-#chat-toggle-btn:hover {
-  background-color: #1a75af;
+.widget-toggle-btn:hover {
   transform: scale(1.1);
 }
 
-#chat-window {
+.widget-panel {
   position: absolute;
-  bottom: 80px;
-  right: 0;
   width: 350px;
-  max-width: 90vw;
-  height: 500px;
-  max-height: 70vh;
   background-color: #252526;
   border-radius: 8px;
   box-shadow: 0 5px 15px rgba(0,0,0,0.3);
@@ -145,16 +135,15 @@ body::after {
   overflow: hidden;
   border: 1px solid #3c3c3c;
   transition: opacity 0.3s ease, transform 0.3s ease;
-  transform-origin: bottom right;
 }
 
-#chat-window.hidden {
+.widget-panel.hidden {
   opacity: 0;
   transform: scale(0.95) translateY(10px);
   pointer-events: none;
 }
 
-#chat-header {
+.widget-panel-header {
   background-color: #333333;
   color: #cccccc;
   padding: 10px 15px;
@@ -163,6 +152,46 @@ body::after {
   align-items: center;
   font-weight: bold;
   border-bottom: 1px solid #3c3c3c;
+}
+
+.widget-panel-close-btn {
+  background: none;
+  border: none;
+  color: #cccccc;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 5px;
+  transition: color 0.2s;
+}
+
+.widget-panel-close-btn:hover {
+  color: white;
+}
+
+
+/* --- CHAT WIDGET --- */
+#chat-widget {
+  bottom: 20px;
+  right: 20px;
+}
+
+#chat-toggle-btn {
+  background-color: #0e639c;
+}
+
+#chat-toggle-btn:hover {
+  background-color: #1a75af;
+}
+
+#chat-window {
+  bottom: 80px;
+  right: 0;
+  width: 350px;
+  max-width: 90vw;
+  height: 500px;
+  max-height: 70vh;
+  transform-origin: bottom right;
 }
 
 .chat-header-controls {
@@ -182,21 +211,6 @@ body::after {
 }
 
 #chat-clear-btn:hover {
-  color: white;
-}
-
-#chat-close-btn {
-  background: none;
-  border: none;
-  color: #cccccc;
-  font-size: 24px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 5px;
-  transition: color 0.2s;
-}
-
-#chat-close-btn:hover {
   color: white;
 }
 
@@ -326,79 +340,23 @@ body::after {
 /* --- SETTINGS WIDGET --- */
 
 #settings-widget {
-  position: fixed;
   bottom: 20px;
   left: 20px;
-  z-index: 1001;
 }
 
 #settings-toggle-btn {
   background-color: #4CAF50; /* A different color to distinguish from chat */
-  color: white;
-  border: none;
-  border-radius: 50%;
-  width: 60px;
-  height: 60px;
-  font-size: 28px;
-  cursor: pointer;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.2s ease, background-color 0.2s ease;
 }
 
 #settings-toggle-btn:hover {
   background-color: #5cb85c;
-  transform: scale(1.1);
 }
 
 #settings-panel {
-  position: absolute;
   bottom: 80px;
   left: 0;
   width: 300px;
-  background-color: #252526;
-  border-radius: 8px;
-  box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid #3c3c3c;
-  transition: opacity 0.3s ease, transform 0.3s ease;
   transform-origin: bottom left;
-}
-
-#settings-panel.hidden {
-  opacity: 0;
-  transform: scale(0.95) translateY(10px);
-  pointer-events: none;
-}
-
-#settings-header {
-  background-color: #333333;
-  color: #cccccc;
-  padding: 10px 15px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: bold;
-  border-bottom: 1px solid #3c3c3c;
-}
-
-#settings-close-btn {
-  background: none;
-  border: none;
-  color: #cccccc;
-  font-size: 24px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 5px;
-  transition: color 0.2s;
-}
-
-#settings-close-btn:hover {
-  color: white;
 }
 
 #settings-content {
@@ -619,79 +577,27 @@ input[type=range]::-moz-range-thumb {
 /* --- CONTACT WIDGET --- */
 
 #contact-widget {
-  position: fixed;
   top: 80px; /* Position below the sticky header */
   left: 20px;
-  z-index: 1001;
 }
 
 #contact-toggle-btn {
   background-color: #6c757d; /* Neutral gray */
-  color: white;
-  border: none;
-  border-radius: 50%;
-  width: 60px;
-  height: 60px;
-  font-size: 28px;
-  cursor: pointer;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.2s ease, background-color 0.2s ease;
 }
 
 #contact-toggle-btn:hover {
   background-color: #5a6268;
-  transform: scale(1.1);
 }
 
 #contact-panel {
-  position: absolute;
   top: 70px; /* Position panel below the button */
   left: 0;
   width: 300px;
-  background-color: #252526;
-  border-radius: 8px;
-  box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid #3c3c3c;
-  transition: opacity 0.3s ease, transform 0.3s ease;
   transform-origin: top left;
 }
 
 #contact-panel.hidden {
-  opacity: 0;
   transform: scale(0.95) translateY(-10px);
-  pointer-events: none;
-}
-
-#contact-header {
-  background-color: #333333;
-  color: #cccccc;
-  padding: 10px 15px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: bold;
-  border-bottom: 1px solid #3c3c3c;
-}
-
-#contact-close-btn {
-  background: none;
-  border: none;
-  color: #cccccc;
-  font-size: 24px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 5px;
-  transition: color 0.2s;
-}
-
-#contact-close-btn:hover {
-  color: white;
 }
 
 #contact-content {

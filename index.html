@@ -72,14 +72,14 @@
     </header>
     <div id="notebook"></div>
 
-    <div id="contact-widget">
-        <button id="contact-toggle-btn" title="Contact Us" aria-label="Toggle Contact Panel" aria-expanded="false">
+    <div id="contact-widget" class="widget">
+        <button id="contact-toggle-btn" class="widget-toggle-btn" title="Contact Us" aria-label="Toggle Contact Panel" aria-expanded="false">
             <i class="fa-solid fa-envelope" aria-hidden="true"></i>
         </button>
-        <div id="contact-panel" class="hidden" role="dialog" aria-labelledby="contact-header-title">
-            <div id="contact-header">
+        <div id="contact-panel" class="widget-panel hidden" role="dialog" aria-labelledby="contact-header-title">
+            <div id="contact-header" class="widget-panel-header">
                 <span id="contact-header-title">Contact Us</span>
-                <button id="contact-close-btn" title="Close contact" aria-label="Close Contact">&times;</button>
+                <button id="contact-close-btn" class="widget-panel-close-btn" title="Close contact" aria-label="Close Contact">&times;</button>
             </div>
             <div id="contact-content">
                 <div class="contact-item">
@@ -94,14 +94,14 @@
         </div>
     </div>
 
-    <div id="settings-widget">
-      <button id="settings-toggle-btn" title="Settings" aria-label="Toggle Settings Panel" aria-expanded="false">
+    <div id="settings-widget" class="widget">
+      <button id="settings-toggle-btn" class="widget-toggle-btn" title="Settings" aria-label="Toggle Settings Panel" aria-expanded="false">
         <i class="fa-solid fa-gear" aria-hidden="true"></i>
       </button>
-      <div id="settings-panel" class="hidden" role="dialog" aria-labelledby="settings-header-title">
-        <div id="settings-header">
+      <div id="settings-panel" class="widget-panel hidden" role="dialog" aria-labelledby="settings-header-title">
+        <div id="settings-header" class="widget-panel-header">
           <span id="settings-header-title">Settings</span>
-          <button id="settings-close-btn" title="Close settings" aria-label="Close Settings">&times;</button>
+          <button id="settings-close-btn" class="widget-panel-close-btn" title="Close settings" aria-label="Close Settings">&times;</button>
         </div>
         <div id="settings-content">
            <div style="font-weight: bold; color: #ccc;">Background</div>
@@ -145,18 +145,18 @@
     </div>
 
 
-    <div id="chat-widget">
-      <button id="chat-toggle-btn" title="AI Assistant" aria-label="Toggle AI Assistant Chat" aria-expanded="false">
+    <div id="chat-widget" class="widget">
+      <button id="chat-toggle-btn" class="widget-toggle-btn" title="AI Assistant" aria-label="Toggle AI Assistant Chat" aria-expanded="false">
         <i class="fa-solid fa-comment-dots" aria-hidden="true"></i>
       </button>
-      <div id="chat-window" class="hidden" role="dialog" aria-labelledby="chat-header-title">
-        <div id="chat-header">
+      <div id="chat-window" class="widget-panel hidden" role="dialog" aria-labelledby="chat-header-title">
+        <div id="chat-header" class="widget-panel-header">
           <span id="chat-header-title">AI Assistant</span>
           <div class="chat-header-controls">
             <button id="chat-clear-btn" title="Clear chat" aria-label="Clear Chat">
               <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
             </button>
-            <button id="chat-close-btn" title="Close chat" aria-label="Close Chat">&times;</button>
+            <button id="chat-close-btn" class="widget-panel-close-btn" title="Close chat" aria-label="Close Chat">&times;</button>
           </div>
         </div>
         <div id="chat-messages" aria-live="polite"></div>
