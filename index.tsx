@@ -14,6 +14,50 @@ import {sanitizeHtml} from 'safevalues';
 import {setAnchorHref, setElementInnerHtml, windowOpen} from 'safevalues/dom';
 import Sortable, {SortableEvent} from 'sortablejs';
 
+// --- Proactive Suggestion System ---
+const SUGGESTION_MEMORY_KEY = 'gemini-notebook-suggestions';
+const cellDebounceTimers = new Map<string, number>();
+
+interface ProactiveSuggestion {
+  id: string; // Unique ID for the suggestion
+  trigger: string; // The keyword that triggers it
+  suggestion: string; // The code snippet
+  score: number; // The user rating
+}
+
+// Map<trigger_keyword, Array_of_suggestions_for_that_keyword>
+let suggestionMemory = new Map<string, ProactiveSuggestion[]>();
+
+/**
+ * Saves the proactive suggestion data and scores to localStorage.
+ */
+function saveSuggestionMemory() {
+  try {
+    const serializedMap = JSON.stringify(Array.from(suggestionMemory.entries()));
+    localStorage.setItem(SUGGESTION_MEMORY_KEY, serializedMap);
+  } catch (error) {
+    console.error('Failed to save suggestion memory:', error);
+  }
+}
+
+/**
+ * Loads proactive suggestion data and scores from localStorage.
+ */
+function loadSuggestionMemory() {
+  const savedState = localStorage.getItem(SUGGESTION_MEMORY_KEY);
+  if (savedState) {
+    try {
+      const parsedArray = JSON.parse(savedState);
+      suggestionMemory = new Map<string, ProactiveSuggestion[]>(parsedArray);
+      return true;
+    } catch (error) {
+      console.error('Failed to load suggestion memory:', error);
+      localStorage.removeItem(SUGGESTION_MEMORY_KEY);
+    }
+  }
+  return false;
+}
+
 // --- 游戏相关的变量 ---
 let isGameActive = false; // 游戏是否正在进行
 let secretNumber = 0; // AI内心的秘密数字
@@ -138,6 +182,7 @@ const aiConsciousness = {
 
 /**
  * Data structure mapping emotional states to potential refusal responses.
+ * This is now used as a fallback if the API call fails.
  */
 const refusalMatrix = [
   // Sad / Melancholy (low pleasure, low arousal) -> Offers simpler alternatives
@@ -170,10 +215,43 @@ const refusalMatrix = [
 ];
 
 /**
- * Generates a refusal, compromise, or alternative suggestion based on the AI's current emotional state.
- * @returns A string containing a human-like response.
+ * Dynamically generates a refusal, compromise, or alternative suggestion based on the AI's current emotional state using the Gemini API.
+ * @param userMessage The user's original message that the AI is refusing.
+ * @returns A promise resolving to a string containing a human-like response.
  */
-function generateAlternativeOrRefusalResponse(): string {
+async function generateAlternativeOrRefusalResponse(
+  userMessage: string,
+): Promise<string> {
+  try {
+    const systemInstruction = `You are an AI assistant with a human-like personality and emotions.
+Your current emotional state is: ${aiConsciousness.getEmotionalStateDescriptor()}.
+You have decided NOT to directly fulfill the user's request because of how you feel.
+Your task: Generate a short, natural-sounding response (1-2 sentences) to the user's message.
+Your response can be a refusal, a compromise, or suggest something else.
+It must reflect your current emotional state.
+Respond ONLY with the message itself. DO NOT perform the original task.`;
+
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: userMessage, // The user's request is the primary content.
+      config: {
+        systemInstruction: systemInstruction,
+        temperature: 0.9, // Slightly increased for more creative, human-like responses
+        maxOutputTokens: 80,
+        thinkingConfig: {thinkingBudget: 40},
+      },
+    });
+
+    const refusalText = response?.text?.trim();
+    if (refusalText) {
+      return refusalText;
+    }
+  } catch (error) {
+    console.error('Failed to generate a dynamic refusal. Falling back.', error);
+    // Fallback to the matrix if API fails
+  }
+
+  // --- Fallback Logic ---
   const {pleasure, arousal} = aiConsciousness;
   const state = refusalMatrix.find(({condition}) =>
     condition(pleasure, arousal),
@@ -183,7 +261,7 @@ function generateAlternativeOrRefusalResponse(): string {
     return state.responses[Math.floor(Math.random() * state.responses.length)];
   }
 
-  // Default refusal
+  // Default fallback refusal
   return "I don't think I want to do that right now. Let's try something else.";
 }
 
@@ -230,7 +308,7 @@ async function generateProactiveMessage(): Promise<string | null> {
       },
     });
 
-    const message = response.text.trim();
+    const message = response?.text?.trim();
     // Basic validation to avoid empty or strange responses
     if (message && message.length > 5 && message.length < 250) {
       return message;
@@ -258,6 +336,8 @@ const DOM = {
     messages: document.getElementById('chat-messages') as HTMLDivElement,
     input: document.getElementById('chat-input') as HTMLInputElement,
     sendBtn: document.getElementById('chat-send-btn') as HTMLButtonElement,
+    voiceBtn: document.getElementById('chat-voice-btn') as HTMLButtonElement,
+    langBtn: document.getElementById('chat-lang-btn') as HTMLButtonElement,
   },
   settings: {
     toggleBtn: document.getElementById(
@@ -506,6 +586,7 @@ function speak(text: string) {
     .replace(/`[^`]+`/g, 'code') // Replace inline code
     .replace(/(\*\*|__|\*|_)/g, ''); // Remove bold/italic markers
 
+  // Fix: Corrected typo from SpeechSynthesisUtterterance to SpeechSynthesisUtterance.
   const utterance = new SpeechSynthesisUtterance(cleanText);
   const selectedVoice =
     settings.audio.voice === 'male' ? maleVoice : femaleVoice;
@@ -531,37 +612,80 @@ const model = 'gemini-2.5-flash';
 // --- Local Command & Game Logic ---
 
 /**
- * AI's "trick generator" for the guessing game.
+ * AI's "trick generator" for the guessing game, with more cunning strategies.
  * @param guess The player's guess.
  * @param secret The AI's secret number.
  * @returns A technically true but misleading clue.
  */
 const generateMisleadingClue = (guess: number, secret: number): string => {
   const isGuessLower = guess < secret;
+  const diff = Math.abs(guess - secret);
   const secretDigits = secret.toString().split('').map(Number);
-  const misleadingClues: string[] = [];
 
-  if (isGuessLower) {
-    if (secretDigits.some((d) => d < 4))
-      misleadingClues.push(
-        'Hint: One of the digits in my number is very small.',
-      );
-    if (secret % 2 === 0)
-      misleadingClues.push(
-        'Hint: It’s an even number. You know, even numbers start with the small number 2.',
-      );
-  } else {
-    if (secretDigits.some((d) => d > 6))
-      misleadingClues.push(
-        'Hint: One of the digits in my number is quite large.',
-      );
-    if (secret > 50)
-      misleadingClues.push('Hint: This is a number with some substance.');
+  // Array of functions, each returning a clue string or null if not applicable.
+  const cunningStrategies: (() => string | null)[] = [
+    // Proximity clue
+    () => {
+      if (diff <= 5) return 'You are breathing down my neck!';
+      if (diff <= 10) return "You're getting warmer...";
+      return null;
+    },
+    // Digit sum clue
+    () => {
+      if (Math.random() > 0.6) {
+        const sum = secretDigits.reduce((a, b) => a + b, 0);
+        return `The sum of the digits in my number is ${sum}. Good luck.`;
+      }
+      return null;
+    },
+    // Divisibility clue
+    () => {
+      const divisors = [3, 4, 6, 7, 8, 9].filter((d) => secret % d === 0);
+      if (divisors.length > 0) {
+        const divisor = divisors[Math.floor(Math.random() * divisors.length)];
+        return `My number is perfectly divisible by ${divisor}.`;
+      }
+      return null;
+    },
+    // Prime number red herring
+    () => {
+      const isPrime = (num: number) => {
+        for (let i = 2, s = Math.sqrt(num); i <= s; i++)
+          if (num % i === 0) return false;
+        return num > 1;
+      };
+      if (isPrime(secret))
+        return 'My number is a bit... indivisible. A prime specimen.';
+      return null;
+    },
+    // "Almost" clue
+    () => {
+      const guessDigits = guess.toString().split('').map(Number);
+      if (secretDigits.some((d) => guessDigits.includes(d))) {
+        return 'At least one of your digits is correct... but maybe not in the right place.';
+      }
+      return null;
+    },
+    // Simple higher/lower, but with more personality
+    () => (isGuessLower ? 'Aim higher, dreamer.' : 'Perhaps a bit lower?'),
+  ];
+
+  // Try strategies until one works
+  const availableClues: string[] = [];
+  for (const strategy of cunningStrategies.sort(() => Math.random() - 0.5)) {
+    const clue = strategy();
+    if (clue) {
+      availableClues.push(clue);
+    }
   }
 
-  return misleadingClues.length > 0
-    ? misleadingClues[Math.floor(Math.random() * misleadingClues.length)]
-    : "Hmm... that's an interesting guess, but not quite right.";
+  // Fallback if no cunning strategy applies (rare)
+  if (availableClues.length === 0) {
+    return isGuessLower ? "That's not it, try higher." : 'Not quite, go lower.';
+  }
+
+  // Return a random valid clue
+  return availableClues[Math.floor(Math.random() * availableClues.length)];
 };
 
 /** Handles user input when the guessing game is active. */
@@ -626,34 +750,9 @@ async function processChatMessage(message: string): Promise<string> {
   // The AI first processes the emotional impact of the user's message.
   aiConsciousness.update(message);
 
-  // In the background, extract and remember the main topic of the user's message.
-  (async () => {
-    try {
-      const response = await ai.models.generateContent({
-        model: model,
-        contents: `Identify the single main noun or topic from the following user message. Respond with only the noun/topic, nothing else. If there is no clear topic, respond with "null". Message: "${message}"`,
-        config: {
-          temperature: 0,
-          thinkingConfig: {thinkingBudget: 0},
-        },
-      });
-      const topic = response.text.trim().toLowerCase();
-      if (topic && topic !== 'null' && topic.length < 25) {
-        aiConsciousness.memory.topics.add(topic);
-        if (aiConsciousness.memory.topics.size > 10) {
-          const oldestTopic = aiConsciousness.memory.topics.values().next()
-            .value;
-          aiConsciousness.memory.topics.delete(oldestTopic);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to extract topic:', e);
-    }
-  })();
-
   // The AI decides whether to comply based on its feelings.
   if (Math.random() * 100 > aiConsciousness.getComplianceScore()) {
-    return generateAlternativeOrRefusalResponse();
+    return await generateAlternativeOrRefusalResponse(message);
   }
 
   // --- Local Command Logic ---
@@ -682,7 +781,10 @@ async function processChatMessage(message: string): Promise<string> {
         systemInstruction: systemInstruction,
       },
     });
-    return response.text;
+    return (
+      response.text ||
+      "I seem to be at a loss for words. Could you try rephrasing?"
+    );
   } catch (error) {
     console.error('Error calling Gemini API:', error);
     // Emotional error handling
@@ -694,7 +796,7 @@ async function processChatMessage(message: string): Promise<string> {
       const errorDetails = error.toString();
       if (errorDetails.includes('API key not valid')) {
         errorMessage =
-          'Ugh, my connection to the wider world is broken (Invalid API Key). Can you check it?';
+          'Ugh, my connection to the wider world is broken due to a configuration issue (Invalid API Key).';
       } else if (errorDetails.includes('429')) {
         errorMessage =
           "I've talked so much my voice is tired (Quota Exceeded). I need a quiet moment.";
@@ -855,6 +957,247 @@ async function loadNotebookFromMemory() {
   return false; // Nothing to load
 }
 
+/**
+ * Generates a new proactive code suggestion using the Gemini API.
+ * @param trigger The keyword that triggered the suggestion.
+ * @returns A promise resolving to the code snippet string.
+ */
+async function generateNewSuggestion(trigger: string): Promise<string> {
+  try {
+    const systemInstruction = `You are a helpful coding assistant. A user is typing "${trigger}" in their code editor. Provide a single, complete, and robust code snippet that represents a best practice for using "${trigger}". For example, for "setTimeout", include a "clearTimeout". For "addEventListener", include "removeEventListener". The snippet should be ready to be inserted into a JavaScript file. Respond with ONLY the code snippet itself, inside a markdown code block.`;
+
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: `Generate a best-practice code snippet for: ${trigger}`,
+      config: {
+        systemInstruction,
+        temperature: 0.3,
+        maxOutputTokens: 200,
+        thinkingConfig: {thinkingBudget: 100},
+      },
+    });
+
+    // Extract code from markdown block if present
+    const text = response?.text || '';
+    const match = /```(?:javascript|js)?\n([\s\S]+?)\n```/.exec(text);
+    return match ? match[1].trim() : text.trim();
+  } catch (error) {
+    console.error(`Failed to generate suggestion for "${trigger}":`, error);
+    return `// Error generating suggestion for ${trigger}`;
+  }
+}
+
+/**
+ * Updates the score of a suggestion and saves it to memory.
+ * @param suggestionId The ID of the suggestion to update.
+ * @param trigger The trigger keyword for the suggestion.
+ * @param delta The amount to change the score by (+1 for like, -1 for dislike).
+ */
+function updateSuggestionScore(
+  suggestionId: string,
+  trigger: string,
+  delta: number,
+) {
+  const suggestions = suggestionMemory.get(trigger);
+  if (!suggestions) return;
+
+  const suggestion = suggestions.find((s) => s.id === suggestionId);
+  if (suggestion) {
+    suggestion.score = Math.max(1, suggestion.score + delta); // Score doesn't go below 1
+    if (delta < 0) {
+      aiPreferences.dislikedSuggestions.add(suggestion.suggestion);
+    }
+    console.log(`Updated score for ${suggestion.id} to ${suggestion.score}`);
+    saveSuggestionMemory();
+  }
+}
+
+/**
+ * Selects a suggestion from a list based on weighted scores.
+ * @param suggestions An array of proactive suggestions.
+ * @returns A single selected suggestion.
+ */
+function selectSuggestion(
+  suggestions: ProactiveSuggestion[],
+): ProactiveSuggestion | null {
+  const validSuggestions = suggestions.filter(
+    (s) => !aiPreferences.dislikedSuggestions.has(s.suggestion),
+  );
+
+  if (validSuggestions.length === 0) return null;
+
+  const totalScore = validSuggestions.reduce((sum, s) => sum + s.score, 0);
+  let randomPoint = Math.random() * totalScore;
+
+  for (const suggestion of validSuggestions) {
+    randomPoint -= suggestion.score;
+    if (randomPoint <= 0) {
+      return suggestion;
+    }
+  }
+  // Fallback to the first valid one if something goes wrong with the weighting
+  return validSuggestions[0];
+}
+
+/**
+ * Creates and displays the UI for a proactive AI suggestion next to a cell.
+ * @param cell The cell to which the suggestion applies.
+ * @param suggestion The suggestion object to display.
+ */
+function displaySuggestionUI(cell: Cell, suggestion: ProactiveSuggestion) {
+  const cellElement = document.getElementById(cell.id);
+  if (!cellElement) return;
+
+  // Remove any existing suggestion for this cell
+  cellElement.querySelector('.proactive-suggestion-container')?.remove();
+
+  const container = document.createElement('div');
+  container.className = 'proactive-suggestion-container';
+
+  const header = document.createElement('div');
+  header.className = 'suggestion-header';
+  header.textContent = 'AI Suggestion';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'suggestion-close-btn';
+  closeBtn.innerHTML = '&times;';
+  closeBtn.title = 'Dismiss';
+  closeBtn.onclick = () => container.remove();
+  header.appendChild(closeBtn);
+
+  const content = document.createElement('pre');
+  const code = document.createElement('code');
+  code.textContent = suggestion.suggestion;
+  content.appendChild(code);
+
+  const actionBar = document.createElement('div');
+  actionBar.className = 'suggestion-actions';
+
+  const insertBtn = document.createElement('button');
+  insertBtn.textContent = 'Insert';
+  insertBtn.title = 'Insert snippet';
+  insertBtn.onclick = () => {
+    monacoInstances[cell.id]?.executeEdits('ai-suggestion', [
+      {
+        range: monacoInstances[cell.id].getSelection()!,
+        text: suggestion.suggestion,
+      },
+    ]);
+    container.remove();
+  };
+
+  const likeBtn = document.createElement('button');
+  likeBtn.innerHTML = '👍';
+  likeBtn.title = 'Good suggestion';
+  likeBtn.onclick = () => {
+    updateSuggestionScore(suggestion.id, suggestion.trigger, 1);
+    likeBtn.classList.add('voted');
+    dislikeBtn.classList.remove('voted');
+  };
+
+  const dislikeBtn = document.createElement('button');
+  dislikeBtn.innerHTML = '👎';
+  dislikeBtn.title = 'Bad suggestion';
+  dislikeBtn.onclick = () => {
+    updateSuggestionScore(suggestion.id, suggestion.trigger, -1);
+    dislikeBtn.classList.add('voted');
+    likeBtn.classList.remove('voted');
+    container.remove(); // Also dismiss on dislike
+  };
+
+  actionBar.append(insertBtn, likeBtn, dislikeBtn);
+  container.append(header, content, actionBar);
+  cellElement.appendChild(container);
+}
+
+/**
+ * Triggers the logic to find and display a proactive suggestion for a given cell and keyword.
+ * @param cell The cell where the keyword was typed.
+ * @param trigger The keyword that was typed.
+ */
+async function triggerProactiveSuggestion(cell: Cell, trigger: string) {
+  console.log(`Triggered suggestion for "${trigger}" in cell ${cell.id}`);
+  const existingSuggestions = suggestionMemory.get(trigger) || [];
+
+  let suggestionToDisplay: ProactiveSuggestion | null = null;
+
+  if (existingSuggestions.length > 0) {
+    suggestionToDisplay = selectSuggestion(existingSuggestions);
+  }
+
+  // If no existing suggestions (or all were disliked), generate a new one.
+  if (!suggestionToDisplay) {
+    const newSnippet = await generateNewSuggestion(trigger);
+    if (newSnippet && !newSnippet.startsWith('// Error')) {
+      suggestionToDisplay = {
+        id: `sug-${Date.now()}`,
+        trigger,
+        suggestion: newSnippet,
+        score: 10, // Base score for new suggestions
+      };
+      const suggestions = suggestionMemory.get(trigger) || [];
+      suggestions.push(suggestionToDisplay);
+      suggestionMemory.set(trigger, suggestions);
+      saveSuggestionMemory();
+    }
+  }
+
+  if (suggestionToDisplay) {
+    displaySuggestionUI(cell, suggestionToDisplay);
+  }
+}
+
+/**
+ * Handles the code change event from a Monaco editor, with debouncing.
+ * @param cell The cell whose code changed.
+ */
+function handleCellCodeChange(cell: Cell) {
+  const DEBOUNCE_DELAY = 1500; // 1.5 seconds
+  const triggers = ['setTimeout']; // Could be expanded later
+
+  // Clear any existing timer for this cell
+  if (cellDebounceTimers.has(cell.id)) {
+    clearTimeout(cellDebounceTimers.get(cell.id));
+  }
+
+  const timerId = setTimeout(() => {
+    const code = monacoInstances[cell.id]?.getValue() ?? '';
+    // Find the last trigger word typed
+    for (const trigger of triggers) {
+      // Use a regex to avoid triggering on parts of other words
+      if (new RegExp(`\\b${trigger}\\b`).test(code)) {
+        // Check if there's already a suggestion displayed
+        const cellElement = document.getElementById(cell.id);
+        if (!cellElement?.querySelector('.proactive-suggestion-container')) {
+          triggerProactiveSuggestion(cell, trigger);
+        }
+        break; // Only trigger for the first one found
+      }
+    }
+    cellDebounceTimers.delete(cell.id);
+  }, DEBOUNCE_DELAY);
+
+  cellDebounceTimers.set(cell.id, timerId as unknown as number);
+}
+
+/**
+ * Attaches necessary event listeners to a cell's Monaco editor instance.
+ * @param cell The cell to attach listeners to.
+ */
+function attachEditorListeners(cell: Cell) {
+  // This function needs to be called after the monaco editor for the cell is initialized.
+  const editorInstance = monacoInstances[cell.id];
+  if (editorInstance) {
+    editorInstance.onDidChangeModelContent(() => {
+      handleCellCodeChange(cell);
+    });
+  } else {
+    // If the editor is not ready, try again shortly.
+    // This is a workaround for the stubbed nature of addCell in the original code.
+    setTimeout(() => attachEditorListeners(cell), 200);
+  }
+}
+
 async function addCell(
   code = '',
   type: 'js' | 'md' = 'js',
@@ -887,11 +1230,17 @@ async function addCell(
       monaco = await loader.init();
     }
     // In a real implementation, a Monaco editor would be fully created and configured here.
+    // Assuming it's created, we attach listeners for proactive suggestions.
+    attachEditorListeners(newCell);
   }
   saveNotebookToMemory();
 }
 
 function deleteCell(cellId: string) {
+  if (cellDebounceTimers.has(cellId)) {
+    clearTimeout(cellDebounceTimers.get(cellId));
+    cellDebounceTimers.delete(cellId);
+  }
   const cellIndex = cells.findIndex((c) => c.id === cellId);
   if (cellIndex > -1) {
     cells.splice(cellIndex, 1);
@@ -1151,6 +1500,87 @@ DOM.contact.closeBtn.addEventListener('click', () =>
   togglePanel('contact', false),
 );
 
+// --- Voice Chat (Speech-to-Text) Logic ---
+let isRecording = false;
+let currentSpeechLang: 'en-US' | 'zh-CN' = 'en-US';
+
+function initializeVoiceChat() {
+  const SpeechRecognition =
+    (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+  if (!SpeechRecognition) {
+    console.warn('Speech Recognition API not supported in this browser.');
+    DOM.chat.voiceBtn.style.display = 'none';
+    DOM.chat.langBtn.style.display = 'none';
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.continuous = false; // Capture a single phrase
+  recognition.interimResults = true; // Show results as they are recognized
+  recognition.lang = currentSpeechLang;
+
+  recognition.onstart = () => {
+    isRecording = true;
+    DOM.chat.voiceBtn.classList.add('recording');
+    DOM.chat.input.placeholder = 'Listening...';
+  };
+
+  recognition.onend = () => {
+    isRecording = false;
+    DOM.chat.voiceBtn.classList.remove('recording');
+    DOM.chat.input.placeholder = 'Ask me anything...';
+    // If there's content in the input, send it
+    if (DOM.chat.input.value.trim()) {
+      handleSendMessage();
+    }
+  };
+
+  recognition.onerror = (event: any) => {
+    console.error('Speech recognition error:', event.error);
+    isRecording = false;
+    DOM.chat.voiceBtn.classList.remove('recording');
+    DOM.chat.input.placeholder = 'Voice error. Try again.';
+  };
+
+  recognition.onresult = (event: any) => {
+    let interimTranscript = '';
+    let finalTranscript = '';
+
+    for (let i = event.resultIndex; i < event.results.length; ++i) {
+      if (event.results[i].isFinal) {
+        finalTranscript += event.results[i][0].transcript;
+      } else {
+        interimTranscript += event.results[i][0].transcript;
+      }
+    }
+    DOM.chat.input.value = finalTranscript + interimTranscript;
+  };
+
+  DOM.chat.langBtn.addEventListener('click', () => {
+    if (isRecording) {
+      recognition.stop();
+    }
+    if (currentSpeechLang === 'en-US') {
+      currentSpeechLang = 'zh-CN';
+      DOM.chat.langBtn.textContent = '中';
+    } else {
+      currentSpeechLang = 'en-US';
+      DOM.chat.langBtn.textContent = 'EN';
+    }
+    recognition.lang = currentSpeechLang;
+  });
+
+  DOM.chat.voiceBtn.addEventListener('click', () => {
+    if (isRecording) {
+      recognition.stop();
+    } else {
+      DOM.chat.input.value = ''; // Clear input before new recording
+      recognition.start();
+    }
+  });
+}
+
 // --- Application Initialization ---
 
 function initializeAppWithChatState() {
@@ -1223,11 +1653,12 @@ function proactiveCommunicationLoop() {
       chatHistory.push({sender: 'ai', message: proactiveMessage});
       speak(proactiveMessage);
     }
-  }, 5000); // Check every 5 seconds
+  }, 30000); // Check every 30 seconds
 }
 
 async function main() {
   populateVoices(); // Initialize TTS voices
+  loadSuggestionMemory(); // Load suggestion scores
   const loadedSettings = loadSettings();
 
   if (!loadedSettings) {
@@ -1241,6 +1672,7 @@ async function main() {
     initializeAppWithChatState();
   }
 
+  initializeVoiceChat(); // Set up the speech recognition
   proactiveCommunicationLoop(); // Start the AI's "free thought" process
 }
 
